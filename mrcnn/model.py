@@ -16,7 +16,7 @@ import logging
 from collections import OrderedDict
 import multiprocessing
 import numpy as np
-import tensorflow as tf
+import tensorflow.compat.v1 as tf
 import keras
 import keras.backend as K
 import keras.layers as KL
@@ -252,7 +252,7 @@ def clip_boxes_graph(boxes, window):
     return clipped
 
 
-class ProposalLayer(KE.Layer):
+class ProposalLayer(KL.Layer): #Changed to regular layer
     """Receives anchor scores and selects a subset to pass as proposals
     to the second stage. Filtering is done based on anchor scores and
     non-max suppression to remove overlaps. It also applies bounding
@@ -323,9 +323,13 @@ class ProposalLayer(KE.Layer):
             # Pad if needed
             padding = tf.maximum(self.proposal_count - tf.shape(proposals)[0], 0)
             proposals = tf.pad(proposals, [(0, padding), (0, 0)])
+            #Changing this
+            # proposals=tf.reshape(proposals,[-1,self.proposal_count,4])
             return proposals
         proposals = utils.batch_slice([boxes, scores], nms,
                                       self.config.IMAGES_PER_GPU)
+        #And added this
+        #proposals=tf.reshape(proposals,[-1,self.proposal_count])
         return proposals
 
     def compute_output_shape(self, input_shape):
@@ -338,10 +342,10 @@ class ProposalLayer(KE.Layer):
 
 def log2_graph(x):
     """Implementation of Log2. TF doesn't have a native implementation."""
-    return tf.log(x) / tf.log(2.0)
+    return tf.math.log(x) / tf.math.log(2.0) #changed from tf.log to tf.math.log
 
 
-class PyramidROIAlign(KE.Layer):
+class PyramidROIAlign(KL.Layer): #Changed to regular layer
     """Implements ROI Pooling on multiple levels of the feature pyramid.
 
     Params:
@@ -619,7 +623,7 @@ def detection_targets_graph(proposals, gt_class_ids, gt_boxes, gt_masks, config)
     return rois, roi_gt_class_ids, deltas, masks
 
 
-class DetectionTargetLayer(KE.Layer):
+class DetectionTargetLayer(KL.Layer): #Changed to regular layer
     """Subsamples proposals and generates target box refinement, class_ids,
     and masks for each.
 
@@ -699,7 +703,8 @@ def refine_detections_graph(rois, probs, deltas, window, config):
     # Class IDs per ROI
     class_ids = tf.argmax(probs, axis=1, output_type=tf.int32)
     # Class probability of the top class of each ROI
-    indices = tf.stack([tf.range(probs.shape[0]), class_ids], axis=1)
+    # indices = tf.stack([tf.range(probs.shape[0]), class_ids], axis=1) <=== changed to below
+    indices = tf.stack([tf.range(tf.shape(probs)[0]), class_ids], axis = 1)
     class_scores = tf.gather_nd(probs, indices)
     # Class-specific bounding box deltas
     deltas_specific = tf.gather_nd(deltas, indices)
@@ -720,7 +725,6 @@ def refine_detections_graph(rois, probs, deltas, window, config):
         keep = tf.sets.set_intersection(tf.expand_dims(keep, 0),
                                         tf.expand_dims(conf_keep, 0))
         keep = tf.sparse_tensor_to_dense(keep)[0]
-
     # Apply per-class NMS
     # 1. Prepare variables
     pre_nms_class_ids = tf.gather(class_ids, keep)
@@ -779,7 +783,7 @@ def refine_detections_graph(rois, probs, deltas, window, config):
     return detections
 
 
-class DetectionLayer(KE.Layer):
+class DetectionLayer(KL.Layer): #Changed to regular layer
     """Takes classified proposal boxes and their bounding box deltas and
     returns the final detection boxes.
 
@@ -948,8 +952,9 @@ def fpn_classifier_graph(rois, feature_maps, image_meta,
                            name='mrcnn_bbox_fc')(shared)
     # Reshape to [batch, num_rois, NUM_CLASSES, (dy, dx, log(dh), log(dw))]
     s = K.int_shape(x)
-    mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
-
+    #Got rid of line below and changed to the line below that (-1 instead of s[1])
+    #mrcnn_bbox = KL.Reshape((s[1], num_classes, 4), name="mrcnn_bbox")(x)
+    mrcnn_bbox = KL.Reshape((-1, num_classes, 4), name="mrcnn_bbox")(x)
     return mrcnn_class_logits, mrcnn_probs, mrcnn_bbox
 
 
@@ -2102,7 +2107,10 @@ class MaskRCNN():
         # Conditional import to support versions of Keras before 2.2
         # TODO: remove in about 6 months (end of 2018)
         try:
-            from keras.engine import saving
+            #Don't import from keras
+            #from keras.engine import saving
+            #Import this instead    
+            from tensorflow.python.keras.saving import hdf5_format
         except ImportError:
             # Keras before 2.2 used the 'topology' namespace.
             from keras.engine import topology as saving
@@ -2127,9 +2135,11 @@ class MaskRCNN():
             layers = filter(lambda l: l.name not in exclude, layers)
 
         if by_name:
-            saving.load_weights_from_hdf5_group_by_name(f, layers)
+            hdf5_format.load_weights_from_hdf5_group_by_name(f, layers)
+            #saving.load_weights_from_hdf5_group_by_name(f, layers) <- using hdf5_format from tf instead of keras
         else:
-            saving.load_weights_from_hdf5_group(f, layers)
+            hdf5_format.load_weights_from_hdf5_group_by_name(f, layers)
+            #saving.load_weights_from_hdf5_group(f, layers) <- using hdf5_format from tf instead of keras
         if hasattr(f, 'close'):
             f.close()
 
